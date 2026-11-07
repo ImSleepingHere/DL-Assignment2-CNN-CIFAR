@@ -13,9 +13,13 @@ All accuracies are on the CIFAR-10 test set (10,000 images). The full write-up w
 | 4 | `assignment_2_resnet_run4.ipynb` (weights: `resnet18_run4.pth`) | ResNet-18 + AutoAugment + CutMix | 200 | **96.83%** with flip TTA (96.53% without) | 96.93% (ep 199) |
 | 5 | `assignment_2_vit_run5.ipynb` (weights: `vit_b16_run5.pth`) | ViT-B/16 pretrained, full fine-tune | 10 | 97.80% with flip TTA (97.72% without) | 97.82% (ep 9) |
 | 6 | `assignment_2_vitl_linear_run6.ipynb` | ViT-L/16 pretrained, **frozen** + linear classifier | 30 (head only) | 98.05% with flip TTA (98.03% without) | 98.06% (ep 17) |
-| 7 | `assignment_2_vitl_finetune_run7.ipynb` | ViT-L/16 pretrained, linear probe then fine-tune with layer-wise LR decay | 1 + 3 | *pending* (attempt 1 crashed: GPU out of memory) | |
+| 7 | `assignment_2_vitl_finetune_run7.ipynb` | ViT-L/16 pretrained, linear probe then fine-tune with layer-wise LR decay | 1 + 3 | 99.28% with flip TTA (99.26% without) | 99.28% (last epoch) |
+| 8 | `assignment_2_vitl_finetune_run8.ipynb` | Same as Run 7, 5 fine-tune epochs | 1 + 5 | **99.31%** with flip TTA (99.30% without) | 99.31% (F4, F5) |
+| 9 | `assignment_2_regnet_cnn_run9.ipynb` | RegNetY-32GF pretrained **CNN**, LP-FT with stage-wise LR decay, 45k/5k train/val split | 1 + 5 | 98.62% with flip TTA (98.43% without), epoch chosen on **validation** | - |
 
-Runs 1-4 train from scratch (best: **96.83%**). Runs 5-7 start from pretrained weights, so report them separately as transfer learning.
+Runs 1-4 train from scratch (best: **96.83%**). Runs 5-9 start from pretrained weights, so report them separately as transfer learning. **Best overall: Run 8, 99.31%.** Best CNN: Run 9, 98.62%.
+
+Run 2 was re-run on an RTX 5080 for the report (`assignment_2.ipynb`, seed 0): final train loss 0.6620, test loss 0.7079, test acc **92.94%** (best epoch 40).
 
 ---
 
@@ -133,7 +137,7 @@ Run 5 (changing every layer aggressively) and Run 6 (changing nothing) both stop
 - **Per class:** airplane 98.0, automobile 99.3, bird 97.1, cat 95.8, deer 98.5, dog 96.8, frog 98.6, horse 99.2, ship 98.5, truck 98.7.
 - **Takeaway:** frozen features are at their limit here. Reaching 99% needs the backbone itself to adapt (Run 7).
 
-## Run 7: *pending*
+## Run 7: ViT-L/16 LP-FT (3 fine-tune epochs), 99.28%
 
 - **Attempt 1, crashed:** stage 1 (linear probe) finished at **97.78%** test accuracy after one head-only epoch. Stage 2 then hit `CUDA out of memory`. Another Jupyter kernel (the Run 6 notebook) was still holding its model and features on the GPU, leaving about 7 GB for a job that needs about 10.5 GB.
 - **Fixes (no change to the training math):**
@@ -143,6 +147,36 @@ Run 5 (changing every layer aggressively) and Run 6 (changing nothing) both stop
   - Each batch of 32 is processed as 2 chunks of 16 (gradient accumulation), which halves activation memory. ViT uses LayerNorm, not BatchNorm, so the gradients are the same as with the full batch.
 - **Before re-running:** shut down the other notebook kernels.
 
+- **Attempt 2 (after the fixes):** finished. **99.28%** test accuracy with flip TTA (99.26% without) after 1 probe + 3 fine-tune epochs; final train loss 0.5099, test loss 0.5217. First run above 99%.
+
+## Run 8: ViT-L/16 LP-FT (5 fine-tune epochs), 99.31%
+
+- **Change:** fine-tune epochs 3 -> 5. Everything else as Run 7.
+- **Per epoch (test acc):** probe 97.79%, then 98.93, 99.10, 99.20, 99.31, 99.31%.
+- **Result:** final train loss 0.5039, test loss 0.5221, **99.31%** with flip TTA (99.30% without) = 69 errors out of 10,000. The epoch count was fixed in advance (no test-based epoch picking).
+- **Per class:** airplane 99.5, automobile 99.6, bird 99.4, cat 98.5, deer 99.3, dog 98.4, frog 99.8, horse 99.8, ship 99.8, truck 99.0.
+
+## Augmentation ablation (Task 4), in `assignment_2.ipynb`
+
+Same CNN and optimizer as Run 2, 20 epochs, only the training transform changes:
+
+| Training augmentation | Train acc | Test loss | Test acc | Train - test gap |
+|---|---|---|---|---|
+| none | 100.00% | 0.7829 | 89.64% | +10.36 |
+| light: crop + flip + erasing (used in Run 2) | 93.12% | 0.7416 | **91.68%** | +1.44 |
+| heavy: resized crop + flip + jitter + rotation + Gaussian noise | 81.46% | 0.8768 | 86.13% | -4.67 |
+
+No augmentation overfits; heavy augmentation under-fits this small CNN in 20 epochs. Light augmentation is best.
+
+## Run 9: RegNetY-32GF (CNN), 98.62%
+
+- **Why:** the assignment is about CNNs, so try the strongest pretrained CNN in torchvision (`RegNet_Y_32GF_Weights.IMAGENET1K_SWAG_LINEAR_V1`, 145M params) with the Run 7/8 recipe.
+- **Validation split:** 45,000 train / 5,000 validation (fixed seed 0). The epoch is picked on validation accuracy and the test set is only reported. This removes the methodology caveat below for this run.
+- **Recipe:** 1 linear-probe epoch (BatchNorm kept frozen, AdamW lr 1e-3), then 5 fine-tune epochs, AdamW base LR 1e-4 with **stage-wise LR decay 0.5** (head 1e-4 ... stem 3.1e-6), wd 0.05, label smoothing 0.1, bf16, batch 32 at 224 px. Peak GPU memory 6.0 GiB, about 6 min per epoch on an RTX 5080.
+- **Per epoch (val / test acc):** probe 95.74 / 94.67, then 97.02 / 96.89, 98.16 / 98.10, 98.24 / 98.26, **98.78** / 98.62, 98.60 / 98.61.
+- **Result:** selected the 4th fine-tune epoch (best validation 98.78%). Train loss 0.5213, test loss 0.5351, **98.62%** with flip TTA (98.43% without), 138 errors. Cat (96.4) and dog (97.7) are again the weakest classes.
+- **Takeaway:** the best pretrained CNN is 0.7 points behind ViT-L/16. Run 8 stays the best design.
+
 ---
 
-**Methodology caveat:** settings were chosen by looking at test accuracy, so the final number is slightly optimistic. A held-out validation split would make it unbiased.
+**Methodology caveat:** for Runs 1-8 settings were chosen by looking at test accuracy, so those numbers are slightly optimistic. Run 9 uses a held-out validation split, so its number is unbiased.
