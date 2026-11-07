@@ -1,2 +1,6 @@
 ./.venv
 ./dataset
+
+# Model checkpoints (too large for git; share separately)
+*.pth
+*.pt
